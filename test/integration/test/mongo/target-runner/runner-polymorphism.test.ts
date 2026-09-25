@@ -1,9 +1,8 @@
-import { createMongoRunnerDeps, introspectSchema } from '@internal/adapter-mongo/control';
-import { MongoDriverImpl } from '@internal/driver-mongo';
+import { introspectSchema, MongoControlAdapterImpl } from '@internal/adapter-mongo/control';
 import { MongoControlDriver } from '@internal/driver-mongo/control';
 import { verifyMongoSchema } from '@internal/family-mongo/schema-verify';
 import type { CodecLookup } from '@internal/framework-components/codec';
-import type { ControlFamilyInstance, MigrationPlan } from '@internal/framework-components/control';
+import type { MigrationPlan } from '@internal/framework-components/control';
 import { buildFabricatedMigrationEdge } from '@internal/migration-tools/aggregate';
 import type { MongoContract } from '@internal/mongo-contract';
 import { interpretPslDocumentToMongoContract } from '@internal/mongo-contract-psl';
@@ -11,12 +10,15 @@ import type { AnyMongoMigrationOperation } from '@internal/mongo-query-ast/contr
 import { MongoSchemaIR } from '@internal/mongo-schema-ir';
 import { buildSymbolTable } from '@internal/psl-parser';
 import { parse } from '@internal/psl-parser/syntax';
+import {
+  MongoMigrationPlanner,
+  MongoMigrationRunner,
+  serializeMongoOps,
+} from '@internal/target-mongo/control';
+import { timeouts } from '@repo/test-utils';
 import { type Db, MongoClient, MongoServerError } from 'mongodb';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { serializeMongoOps } from '../src/core/mongo-ops-serializer';
-import { MongoMigrationPlanner } from '../src/core/mongo-planner';
-import { MongoMigrationRunner } from '../src/core/mongo-runner';
 
 let replSet: MongoMemoryReplSet;
 let client: MongoClient;
@@ -30,12 +32,12 @@ beforeAll(async () => {
   client = new MongoClient(replSet.getUri());
   await client.connect();
   db = client.db(dbName);
-});
+}, timeouts.spinUpMongoMemoryServer);
 
 afterAll(async () => {
   await client?.close();
   await replSet?.stop();
-});
+}, timeouts.spinUpMongoMemoryServer);
 
 beforeEach(async () => {
   const collections = await db.listCollections().toArray();
@@ -46,11 +48,11 @@ beforeEach(async () => {
 
 const mongoScalarTypeDescriptors: ReadonlyMap<string, string> = new Map([
   ['String', 'mongo/string@1'],
-  ['Int', 'mongo/int32@1'],
-  ['Boolean', 'mongo/bool@1'],
-  ['DateTime', 'mongo/date@1'],
+  ['Int32', 'mongo/int32@1'],
+  ['Bool', 'mongo/bool@1'],
+  ['Date', 'mongo/date@1'],
   ['ObjectId', 'mongo/objectId@1'],
-  ['Float', 'mongo/double@1'],
+  ['Double', 'mongo/double@1'],
 ]);
 
 const mongoTargetTypes: Record<string, readonly string[]> = {
@@ -168,20 +170,9 @@ function serializePlan(plan: MigrationPlan): MigrationPlan {
   };
 }
 
-function fakeFamily(): ControlFamilyInstance<'mongo', MongoSchemaIR> {
-  return {
-    familyId: 'mongo' as const,
-    introspect: async () => introspectSchema(db),
-  } as unknown as ControlFamilyInstance<'mongo', MongoSchemaIR>;
-}
-
 function makeRunner() {
   return new MongoMigrationRunner(
-    createMongoRunnerDeps(
-      new MongoControlDriver(db, client),
-      MongoDriverImpl.fromDb(db),
-      fakeFamily(),
-    ),
+    new MongoControlAdapterImpl().createRunnerDependencies(new MongoControlDriver(db, client)),
   );
 }
 

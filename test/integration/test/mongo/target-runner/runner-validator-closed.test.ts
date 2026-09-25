@@ -1,11 +1,6 @@
-import {
-  createMongoRunnerDeps,
-  introspectSchema,
-  MongoControlAdapterImpl,
-} from '@internal/adapter-mongo/control';
-import { MongoDriverImpl } from '@internal/driver-mongo';
+import { MongoControlAdapterImpl } from '@internal/adapter-mongo/control';
 import { MongoControlDriver } from '@internal/driver-mongo/control';
-import type { ControlFamilyInstance, MigrationPlan } from '@internal/framework-components/control';
+import type { MigrationPlan } from '@internal/framework-components/control';
 import { buildFabricatedMigrationEdge } from '@internal/migration-tools/aggregate';
 import { MongoCollection, type MongoContract } from '@internal/mongo-contract';
 import type { AnyMongoMigrationOperation } from '@internal/mongo-query-ast/control';
@@ -14,12 +9,15 @@ import {
   MongoSchemaIR,
   MongoSchemaValidator,
 } from '@internal/mongo-schema-ir';
+import {
+  MongoMigrationPlanner,
+  MongoMigrationRunner,
+  serializeMongoOps,
+} from '@internal/target-mongo/control';
+import { timeouts } from '@repo/test-utils';
 import { type Db, MongoClient } from 'mongodb';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { serializeMongoOps } from '../src/core/mongo-ops-serializer';
-import { MongoMigrationPlanner } from '../src/core/mongo-planner';
-import { MongoMigrationRunner } from '../src/core/mongo-runner';
 
 const controlAdapter = new MongoControlAdapterImpl();
 
@@ -35,12 +33,12 @@ beforeAll(async () => {
   client = new MongoClient(replSet.getUri());
   await client.connect();
   db = client.db(dbName);
-});
+}, timeouts.spinUpMongoMemoryServer);
 
 afterAll(async () => {
   await client?.close();
   await replSet?.stop();
-});
+}, timeouts.spinUpMongoMemoryServer);
 
 beforeEach(async () => {
   const collections = await db.listCollections().toArray();
@@ -93,20 +91,9 @@ function serializePlan(plan: MigrationPlan): MigrationPlan {
   };
 }
 
-function fakeFamily(): ControlFamilyInstance<'mongo', MongoSchemaIR> {
-  return {
-    familyId: 'mongo' as const,
-    introspect: async () => introspectSchema(db),
-  } as unknown as ControlFamilyInstance<'mongo', MongoSchemaIR>;
-}
-
 function makeRunner() {
   return new MongoMigrationRunner(
-    createMongoRunnerDeps(
-      new MongoControlDriver(db, client),
-      MongoDriverImpl.fromDb(db),
-      fakeFamily(),
-    ),
+    controlAdapter.createRunnerDependencies(new MongoControlDriver(db, client)),
   );
 }
 

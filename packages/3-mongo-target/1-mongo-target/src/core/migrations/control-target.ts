@@ -1,16 +1,13 @@
-import {
-  createMongoRunnerDeps,
-  extractDb,
-  type MongoRunnerDependencies,
-} from '@internal/adapter-mongo/control';
 import type { Contract } from '@internal/contract/types';
-import { MongoDriverImpl } from '@internal/driver-mongo';
 import type {
   MongoControlFamilyInstance,
   MongoControlTargetDescriptor,
 } from '@internal/family-mongo/control';
 import { contractToMongoSchemaIR } from '@internal/family-mongo/control';
-import type { MongoControlAdapter } from '@internal/family-mongo/control-adapter';
+import type {
+  MongoControlAdapter,
+  MongoRunnerDependencies,
+} from '@internal/family-mongo/control-adapter';
 import type {
   MigrationRunner,
   MigrationRunnerPerSpaceSuccessValue,
@@ -20,11 +17,11 @@ import type {
 import type { MongoContract } from '@internal/mongo-contract';
 import { blindCast } from '@internal/utils/casts';
 import { notOk, ok } from '@internal/utils/result';
-import { mongoTargetDescriptorMeta } from './descriptor-meta';
+import { mongoTargetDescriptorMeta } from '../descriptor-meta';
+import type { MongoTargetContract } from '../mongo-target-contract';
+import { MongoTargetContractSerializer } from '../mongo-target-contract-serializer';
 import { MongoMigrationPlanner } from './mongo-planner';
 import { MongoMigrationRunner, type MongoMigrationRunnerExecuteOptions } from './mongo-runner';
-import type { MongoTargetContract } from './mongo-target-contract';
-import { MongoTargetContractSerializer } from './mongo-target-contract-serializer';
 import { MongoTargetSchemaVerifier } from './mongo-target-schema-verifier';
 import { entityNamesDeclaredBy, scopeVerifyResultToSpace } from './scope-verify-result';
 
@@ -59,11 +56,7 @@ export const mongoTargetDescriptor: MongoControlTargetDescriptor<MongoTargetCont
           readonly destinationContract: unknown;
         },
       ) => {
-        cachedDeps ??= createMongoRunnerDeps(
-          driver,
-          MongoDriverImpl.fromDb(extractDb(driver)),
-          family,
-        );
+        cachedDeps ??= family.createRunnerDependencies({ driver });
         // The framework `MigrationRunner` interface types `destinationContract`
         // as `unknown`; the Mongo runner narrows to `MongoContract`. Validation
         // happens upstream — `migrate` calls

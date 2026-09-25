@@ -19,10 +19,12 @@ import { errorEnumCodecNotInPackStack } from '@internal/errors/control';
 import type {
   AuthoringContributions,
   AuthoringEntityContext,
+  AuthoringTypeNamespace,
 } from '@internal/framework-components/authoring';
 import {
   instantiateAuthoringEntityType,
   isAuthoringEntityTypeDescriptor,
+  isAuthoringTypeConstructorDescriptor,
 } from '@internal/framework-components/authoring';
 import type { CodecLookup } from '@internal/framework-components/codec';
 import type { ControlDefaultRegistries } from '@internal/framework-components/control';
@@ -55,6 +57,7 @@ import {
   createPslDiagnosticCollector,
   type DiagnosticSource,
   diagnosticSource,
+  mapPslDiagnostics,
   nodePslSpan,
   type PslDiagnostic,
   type PslDiagnosticCollector,
@@ -107,6 +110,43 @@ export interface InterpretPslDocumentToMongoContractInput {
   readonly authoringContributions?: AuthoringContributions;
   /** The target's default codec ids for an `enum` block that omits `@@type`. */
   readonly enumInferenceCodecs?: { readonly text: string; readonly int: string };
+  /** Receives a warning for each field typed with a deprecated scalar name. */
+  readonly reportWarning?: (diagnostic: ContractSourceDiagnostic) => void;
+}
+
+/**
+ * Reports `PSL_DEPRECATED_SCALAR_NAME` at the type of a field whose scalar name is a deprecated alias, naming the replacement. The alias resolves to the same codec, so the contract does not change.
+ */
+function deprecatedScalarWarner(input: {
+  readonly types: AuthoringTypeNamespace | undefined;
+  readonly sources: PslSources;
+  readonly reportWarning: ((diagnostic: ContractSourceDiagnostic) => void) | undefined;
+}): (field: FieldSymbol) => void {
+  const { reportWarning } = input;
+  if (reportWarning === undefined) return () => {};
+  return (field) => {
+    if (field.typeConstructor !== undefined) return;
+    const descriptor = input.types?.[field.typeName];
+    if (
+      descriptor === undefined ||
+      !isAuthoringTypeConstructorDescriptor(descriptor) ||
+      descriptor.deprecated === undefined
+    ) {
+      return;
+    }
+    const typeNode = field.node.typeAnnotation()?.name()?.syntax ?? field.node.syntax;
+    const [warning] = mapPslDiagnostics(
+      [
+        {
+          code: 'PSL_DEPRECATED_SCALAR_NAME',
+          message: `Scalar type "${field.typeName}" is deprecated and will be removed; use "${descriptor.deprecated.replacement}" (stored as BSON ${descriptor.output.nativeType}).`,
+          ...diagnosticSource(input.sources, typeNode).at(),
+        },
+      ],
+      input.sources,
+    );
+    if (warning !== undefined) reportWarning({ ...warning, severity: 'warning' });
+  };
 }
 
 /**
@@ -942,6 +982,7 @@ function resolveNonRelationField(
   codecIdByEnumName: ReadonlyMap<string, string>,
   sources: PslSources,
   diagnostics: PslDiagnosticCollector,
+  warnDeprecatedScalar: (field: FieldSymbol) => void,
 ): ContractField | undefined {
   if (compositeTypeNames.has(field.typeName)) {
     const result: ContractField = {
@@ -984,6 +1025,7 @@ function resolveNonRelationField(
     return undefined;
   }
 
+  warnDeprecatedScalar(field);
   const result: ContractField = {
     type: { kind: 'scalar', codecId },
     nullable: field.optional,
@@ -1052,6 +1094,11 @@ export function interpretPslDocumentToMongoContract(
 ): Result<Contract, ContractSourceDiagnostics> {
   const { symbolTable, sources, scalarTypeCodecIds, codecLookup } = input;
   const diagnostics = createPslDiagnosticCollector(sources);
+  const warnDeprecatedScalar = deprecatedScalarWarner({
+    types: input.authoringContributions?.type,
+    sources,
+    reportWarning: input.reportWarning,
+  });
   const { binder, diagnostics: binderDiagnostics } = createMongoBinder({
     symbolTable,
     sources,
@@ -1236,6 +1283,7 @@ export function interpretPslDocumentToMongoContract(
         codecIdByEnumName,
         sources,
         diagnostics,
+        warnDeprecatedScalar,
       );
       if (!resolved) continue;
 
@@ -1327,6 +1375,7 @@ export function interpretPslDocumentToMongoContract(
         codecIdByEnumName,
         sources,
         diagnostics,
+        warnDeprecatedScalar,
       );
       if (!resolved) continue;
       fields[field.name] = resolved;
