@@ -1,3 +1,4 @@
+import { timestampNowRuntimeGenerator } from '@internal/family-mongo/runtime';
 import type {
   ExecutionStack,
   RuntimeAdapterDescriptor,
@@ -23,6 +24,9 @@ const mongoRuntimeAdapterDescriptor: RuntimeAdapterDescriptor<
   MongoRuntimeAdapterInstance
 > & {
   readonly codecs: () => MongoCodecRegistry;
+  readonly mutationDefaultGenerators: () => ReadonlyArray<
+    ReturnType<typeof timestampNowRuntimeGenerator>
+  >;
 } = {
   kind: 'adapter',
   id: 'mongo',
@@ -30,6 +34,7 @@ const mongoRuntimeAdapterDescriptor: RuntimeAdapterDescriptor<
   targetId: 'mongo',
   version: '0.0.1',
   codecs: buildStandardCodecRegistry,
+  mutationDefaultGenerators: () => [timestampNowRuntimeGenerator()],
   create(_stack: ExecutionStack<'mongo', 'mongo'>): MongoRuntimeAdapterInstance {
     const adapter = createMongoAdapter();
     return {

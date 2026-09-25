@@ -307,7 +307,7 @@ Two authoring entries claim the same written form — the same literal tag, or t
 
 ### CONTRACT.DEFAULT_INVALID
 
-A field's default declaration is invalid: `defaultSql` is used on an enum field, a field declares both `default` and `executionDefaults`, or a field is nullable while carrying `executionDefaults`. Raised while authoring/building a SQL contract. Payload: `modelName`, `fieldName`, `reason`. Also raised by the Postgres adapter's DDL renderer when a hand-authored `col(...)` pairs an `autoincrement()` default with a type that isn't `SERIAL`/`BIGSERIAL`/`SMALLSERIAL` (or their `SERIAL4`/`SERIAL8`/`SERIAL2` aliases). Meta in that case: `nativeType`. Also raised by the TypeScript `sql` template tag when the body cannot be canonicalized, with the same message as the PSL diagnostics `PSL_TAGGED_LITERAL_NUL` and `PSL_TAGGED_LITERAL_TOO_LARGE` (meta: `reason`, `offset`) or is exactly `now()` or `autoincrement()` (`` Write .default(now()) instead of sql`now()`; now() is a Prisma default function, not raw SQL. ``; meta: `reason: 'reserved-function'`, `expression`), or fails the SQL body check (`Default SQL must not contain semicolons, SQL comment tokens, dollar-quoting, or subqueries.`; meta: `reason: 'unsafe-sql'`, `expression`), and by both the Postgres and SQLite migration planners when a function default in the contract fails that same check at DDL time (meta: `expression`).
+A field's default declaration is invalid: `defaultSql` is used on an enum field, a field declares both `default` and `executionDefaults`, or a field is nullable while carrying `executionDefaults`. Raised while authoring/building a SQL contract. Payload: `modelName`, `fieldName`, `reason`. The Mongo TypeScript builder raises it for execution defaults it cannot key to one collection field: on a variant model's field (`reason: 'executionDefaults-on-variant'`; declare the field on the base model, whose defaults apply to every variant), or with different phases on two models stored in the same collection (`reason: 'executionDefaults-conflict'`; identical ones are merged). The PSL interpreter reports the same cases as `PSL_PRESET_ON_VARIANT_FIELD` and `PSL_PRESET_CONFLICT`. Also raised by the Postgres adapter's DDL renderer when a hand-authored `col(...)` pairs an `autoincrement()` default with a type that isn't `SERIAL`/`BIGSERIAL`/`SMALLSERIAL` (or their `SERIAL4`/`SERIAL8`/`SERIAL2` aliases). Meta in that case: `nativeType`. Also raised by the TypeScript `sql` template tag when the body cannot be canonicalized, with the same message as the PSL diagnostics `PSL_TAGGED_LITERAL_NUL` and `PSL_TAGGED_LITERAL_TOO_LARGE` (meta: `reason`, `offset`) or is exactly `now()` or `autoincrement()` (`` Write .default(now()) instead of sql`now()`; now() is a Prisma default function, not raw SQL. ``; meta: `reason: 'reserved-function'`, `expression`), or fails the SQL body check (`Default SQL must not contain semicolons, SQL comment tokens, dollar-quoting, or subqueries.`; meta: `reason: 'unsafe-sql'`, `expression`), and by both the Postgres and SQLite migration planners when a function default in the contract fails that same check at DDL time (meta: `expression`).
 
 ### CONTRACT.DEFAULT_SQL_INTERPOLATION
 
@@ -667,6 +667,14 @@ A list column declares `@default(autoincrement())`: `Field "<Model>.<field>" is 
 
 A `` @default(sql`...`) `` body fails the SQL family's body check: `Default SQL must not contain semicolons, SQL comment tokens, dollar-quoting, or subqueries.` (the rule the migration planners apply at DDL time, run at authoring time so it has a source span), or is exactly `now()` or `autoincrement()`: `` Write @default(now()) instead of sql`now()`; now() is a Prisma default function, not raw SQL. `` The message names the tag as written (`sql`, `pg.sql` or `sqlite.sql`). Reported at the literal.
 
+### PSL_PRESET_ON_VARIANT_FIELD
+
+A Mongo field preset that sets execution defaults, such as `temporal.createdAt()`, is declared on a field of a polymorphic variant model (one with `@@base`): `Preset "<preset>" on variant "<Model>" field "<field>": execution defaults apply to every document in collection "<collection>", so declare them on the base model.` Execution defaults are keyed by collection and field, so a default on one variant would also fill that field on the base model and every sibling variant. Declare the field on the base model; variants inherit it. Reported at the preset.
+
+### PSL_PRESET_CONFLICT
+
+Two Mongo models stored in the same collection declare field presets with different execution defaults for the same stored field, for example `temporal.createdAt()` on one and `temporal.updatedAt()` on the other. Execution defaults are keyed by collection and field, so the collection can have only one. Identical presets are merged. Use the same preset on both models. Reported at the second preset.
+
 ## ORM
 
 ### ORM.AGGREGATE_OPERATION_RESERVED
@@ -740,6 +748,10 @@ The Mongo ORM client was asked to operate on a model name that is not in the con
 ### ORM.MUTATION_DATA_MISSING
 
 `create()` or `createAndCount()` was called with zero rows; at least one row of data is required. Payload: `method`, `namespaceId`, `tableName`.
+
+### ORM.MUTATION_DEFAULTS_MISSING
+
+`mongoOrm()` was built over a contract with execution defaults (fields such as `temporal.createdAt()` that the ORM fills on write) without `mutationDefaults`, so those fields would never be written. Pass the execution context, `mongoOrm({ contract, executor, mutationDefaults: context })`, or create the client with `mongo()`. Payload: `fields` (`<collection>.<field>` for each default).
 
 ### ORM.MUTATION_ROW_MISSING
 
@@ -885,7 +897,7 @@ Two runtime stack contributors (target pack, extension packs) register a codec w
 
 ### RUNTIME.DUPLICATE_MUTATION_DEFAULT_GENERATOR
 
-Two runtime stack contributors register a mutation default generator with the same id while the SQL context collects them. Payload: `id`, `existingOwner`, `incomingOwner`.
+Two runtime stack contributors register a mutation default generator with the same id while the SQL context or the Mongo execution context collects them. Payload: `id`, `existingOwner`, `incomingOwner`.
 
 ### RUNTIME.ENCODE_FAILED
 
@@ -939,7 +951,7 @@ Statistics execution was requested for a Mongo command that does not expose affe
 
 ### RUNTIME.MUTATION_DEFAULT_GENERATOR_MISSING
 
-The contract declares column defaults produced by a mutation default generator (e.g. a nanoid/uuid generator) that no runtime component provides, detected up front when the SQL context validates generator coverage, or at mutation time when a generator-kind default spec is resolved. Payload: `ids` (validation pass) or `id` (resolution).
+The contract declares column or field defaults produced by a mutation default generator (e.g. a nanoid/uuid generator, or `timestampNow` behind `temporal.createdAt()`) that no runtime component provides, detected up front when the SQL context or the Mongo execution context validates generator coverage, or at mutation time when a generator-kind default spec is resolved. Payload: `ids` (validation pass) or `id` (resolution).
 
 ### RUNTIME.NAMESPACE_UNKNOWN
 
