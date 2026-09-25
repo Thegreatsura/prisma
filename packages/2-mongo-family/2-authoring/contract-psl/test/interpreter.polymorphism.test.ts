@@ -12,7 +12,10 @@ import type { DocumentAst, PslSources } from '@internal/psl-parser/syntax';
 import { parse } from '@internal/psl-parser/syntax';
 import { describe, expect, it } from 'vitest';
 import { interpretPslDocumentToMongoContract } from '../src/interpreter';
-import { expectInvalidAttributeSyntax } from './interpreter-test-helpers';
+import {
+  expectInvalidAttributeSyntax,
+  expectUnresolvedReference,
+} from './interpreter-test-helpers';
 
 const mongoScalarTypeDescriptors: ReadonlyMap<string, string> = new Map([
   ['String', 'mongo/string@1'],
@@ -368,8 +371,8 @@ namespace scoped {
       expect(result.failure.diagnostics).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            code: 'PSL_INVALID_ATTRIBUTE_SYNTAX',
-            message: expect.stringContaining('does not exist'),
+            code: 'PSL_UNRESOLVED_REFERENCE',
+            message: expect.stringContaining('Cannot find field'),
           }),
         ]),
       );
@@ -447,8 +450,8 @@ namespace scoped {
       expect(result.failure.diagnostics).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            code: 'PSL_INVALID_ATTRIBUTE_SYNTAX',
-            message: 'Unknown model reference "NonExistent"',
+            code: 'PSL_UNRESOLVED_REFERENCE',
+            message: expect.stringContaining('Cannot find entity'),
           }),
         ]),
       );
@@ -745,7 +748,7 @@ namespace scoped {
         }
       `);
 
-      const diag = expectInvalidAttributeSyntax(result, /Expected one of/);
+      const diag = expectUnresolvedReference(result, /Cannot find field "title"/);
       expect(diag.span?.start.offset).toBeGreaterThan(0);
     });
   });
