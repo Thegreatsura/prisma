@@ -266,5 +266,52 @@ describe('ORM ergonomics integration', {
       const tasks = (result as Record<string, unknown>)['tasks'] as unknown[];
       expect(tasks).toEqual([]);
     });
+
+    it('select() keeps a 1:N include whose join key is not selected', async () => {
+      const orm = mongoOrm({ contract, executor: runtime });
+      const user = await orm.users.create(defaultUserData);
+      await orm.tasks.create({
+        title: 'Task 1',
+        type: 'bug',
+        assigneeId: user._id as string,
+      } as never);
+
+      const result = await orm.users
+        .select('name')
+        .include('tasks')
+        .where({ _id: user._id as string })
+        .first();
+
+      expect(result).toEqual({
+        name: 'Alice',
+        tasks: [
+          { _id: expect.anything(), title: 'Task 1', type: 'bug', assigneeId: expect.anything() },
+        ],
+      });
+    });
+
+    it('select() keeps an N:1 include whose join key is not selected', async () => {
+      const orm = mongoOrm({ contract, executor: runtime });
+      const user = await orm.users.create(defaultUserData);
+      await orm.tasks.create({
+        title: 'Task 1',
+        type: 'bug',
+        assigneeId: user._id as string,
+      } as never);
+
+      const result = await orm.tasks.select('title').include('assignee').first();
+
+      expect(result).toEqual({
+        title: 'Task 1',
+        assignee: {
+          _id: expect.anything(),
+          name: 'Alice',
+          email: 'alice@test.com',
+          loginCount: 0,
+          tags: [],
+          homeAddress: null,
+        },
+      });
+    });
   });
 });
